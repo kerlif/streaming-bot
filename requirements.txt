@@ -1,11 +1,5 @@
-# Streaming Bot - Requirements
-# Python 3.9+
-
-# Telegram Bot API
-python-telegram-bot==21.0.1
-
-# Video/Audio Processing
-yt-dlp
-
-# Logging and Utilities
+# Streaming Bot - Requirements (Python 3.11+)
+python-telegram-bot[job-queue]==21.0.1
 python-dotenv==1.0.0
+# يوتيوب يغيّر آلياته باستمرار: لا تثبّت نسخة قديمة. أعد بناء الصورة دورياً.
+yt-dlp

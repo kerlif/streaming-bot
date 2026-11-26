@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   streaming-bot:
     build:
@@ -7,63 +5,38 @@ services:
       dockerfile: Dockerfile
     container_name: streaming-bot
     image: streaming-bot:hardened
-
-    # Environment variables - read from .env file
     env_file:
       - .env
     environment:
-      - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/stream_manager.db
-
-    # Volumes for persistent data
+    # named volume (وليس ./data): Docker ينسخ ملكية /app/data من الصورة (botuser)
+    # فلا يظهر الخطأ "unable to open database file". لتحويله لمجلد عادي نفّذ:
+    #   mkdir data && sudo chown 1000:1000 data   ثم استبدل السطر بـ ./data:/app/data
     volumes:
-      - ./data:/app/data
-
-    # Restart policy - only on failure, not on healthy=False loops
+      - bot-data:/app/data
     restart: unless-stopped
-
-    # Resource limits
+    init: true               # يمنع بقاء عمليات ffmpeg يتيمة (zombies)
+    stop_grace_period: 20s   # وقت كافٍ لإيقاف ffmpeg بنظافة
     deploy:
       resources:
         limits:
           cpus: '2'
           memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
-
-    # Logging - bounded size to prevent disk overflow
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
-    # Real health check - uses the Python healthcheck.py script
-    # (matches the one in Dockerfile; keeps docker-compose standalone-runnable)
     healthcheck:
       test: ["CMD", "python", "/app/healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-    # Security hardening
     security_opt:
       - no-new-privileges:true
-    read_only: false  # /app/data needs write access
     cap_drop:
       - ALL
-    cap_add:
-      - SETUID   # needed for ffmpeg subprocess management
-      - SETGID
 
-# Networks
-networks:
-  default:
-    name: streaming-network
-
-# Volumes
 volumes:
-  data:
-    driver: local
+  bot-data:

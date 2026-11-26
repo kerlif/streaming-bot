@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Streaming Bot Banner](https://img.shields.io/badge/Version-2.0.0%20Hardened-blue?style=for-the-badge)
+![Streaming Bot Banner](https://img.shields.io/badge/Version-2.4.0%20Hardened-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge)
@@ -34,7 +34,7 @@
 
 Designed for broadcasters who need a **secure, multi-tenant, maintainable** stream-relay bot.
 
-### 🔥 What's New in v2.0.0 (Hardened Edition)
+### 🔥 What's New in the Hardened Edition
 
 This is a **complete security-focused rewrite** addressing 10 critical issues from the original:
 
@@ -50,8 +50,6 @@ This is a **complete security-focused rewrite** addressing 10 critical issues fr
 | 8 | Broken Docker healthcheck (curl /health on polling bot) | 🟠 High | Real `healthcheck.py` with 4 actual checks |
 | 9 | Running as root in container | 🟡 Medium | Dedicated `botuser` (UID 1000) + `cap_drop: ALL` |
 | 10 | No `channel_id` validation | 🟠 High | Strict validators for URL / server / channel_id |
-
-> 📄 **Full fix report:** see [`FIXES_REPORT.md`](./FIXES_REPORT.md)
 
 ### ✨ Features
 
@@ -132,7 +130,7 @@ sudo apt-get install -y python3.11 python3.11-venv ffmpeg git
 
 # Python requirements
 pip install -r requirements.txt
-# yt-dlp installed via Dockerfile or: pip install yt-dlp==2024.8.6
+# yt-dlp installed via Dockerfile or: pip install yt-dlp
 ```
 
 #### 2. Get Your Telegram IDs
@@ -143,7 +141,7 @@ pip install -r requirements.txt
 #### 3. Clone & Configure
 
 ```bash
-git clone <your-fork-url> streaming-bot
+git clone https://github.com/kerlif/streaming-bot.git streaming-bot
 cd streaming-bot
 
 python3.11 -m venv venv
@@ -440,11 +438,10 @@ sudo systemctl status streaming-bot
 | High CPU usage | Reduce bitrate in `_build_ffmpeg_cmd_radio()` or use radio mode for audio-only |
 | MarkdownV2 parse error | All dynamic values should go through `md_escape()` — report if you see this |
 | Container restarts constantly | Run `python healthcheck.py` manually to see which check fails |
-| `yt-dlp` fails on YouTube | Update: `pip install --upgrade yt-dlp==2024.8.6` |
+| `yt-dlp` fails on YouTube | Update: `pip install --upgrade yt-dlp` |
 
 ### 📖 Documentation
 
-- 📘 **[FIXES_REPORT.md](./FIXES_REPORT.md)** — Full security fix report (10 issues addressed)
 - 📘 [Installation Guide](./DEPLOYMENT.md)
 - 🔐 [Security Guide](./SECURITY.md)
 - 🤝 [Contributing](./CONTRIBUTING.md)
@@ -484,8 +481,8 @@ This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) 
 
 ### 💬 Support & Contact
 
-- 🐛 **Issues**: [GitHub Issues](https://github.com/phoneKYC/streaming-bot/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/phoneKYC/streaming-bot/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/kerlif/streaming-bot/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/kerlif/streaming-bot/discussions)
 
 ### 👨‍💻 Development
 
@@ -502,7 +499,7 @@ This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) 
 
 مُصمَّم للمذيعين الذين يحتاجون بوت ترحيل بث **آمن ومتعدد المستخدمين وقابل للصيانة**.
 
-### 🔥 ما الجديد في الإصدار 2.0.0 (النسخة المُحصَّنة)
+### 🔥 ما الجديد في النسخة المُحصَّنة
 
 هذه **إعادة كتابة كاملة مُركَّزة على الأمان** تُعالج 10 مشاكل حرجة من النسخة الأصلية:
 
@@ -518,8 +515,6 @@ This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) 
 | 8 | Docker healthcheck مكسور (curl /health على بوت polling) | 🟠 عالية | `healthcheck.py` حقيقي بـ 4 فحوصات فعلية |
 | 9 | تشغيل كـ root في الحاوية | 🟡 متوسطة | مستخدم مخصص `botuser` (UID 1000) + `cap_drop: ALL` |
 | 10 | لا تحقق من `channel_id` | 🟠 عالية |.validators صارمة لـ URL / server / channel_id |
-
-> 📄 **تقرير الإصلاحات الكامل:** راجع [`FIXES_REPORT.md`](./FIXES_REPORT.md)
 
 ### ✨ المميزات الرئيسية
 
@@ -611,7 +606,7 @@ pip install -r requirements.txt
 #### 3. الاستنساخ والتكوين
 
 ```bash
-git clone <your-fork-url> streaming-bot
+git clone https://github.com/kerlif/streaming-bot.git streaming-bot
 cd streaming-bot
 
 python3.11 -m venv venv
@@ -912,7 +907,6 @@ sudo systemctl status streaming-bot
 
 ### 📖 التوثيق
 
-- 📘 **[FIXES_REPORT.md](./FIXES_REPORT.md)** — تقرير الإصلاحات الأمنية الكامل (10 مشاكل عُولجت)
 - 📘 [دليل التثبيت](./DEPLOYMENT.md)
 - 🔐 [دليل الأمان](./SECURITY.md)
 - 🤝 [المساهمة](./CONTRIBUTING.md)
@@ -952,8 +946,8 @@ git push origin feature/AmazingFeature
 
 ### 💬 الدعم والتواصل
 
-- 🐛 **المشاكل**: [GitHub Issues](https://github.com/phoneKYC/streaming-bot/issues)
-- 💬 **النقاشات**: [GitHub Discussions](https://github.com/phoneKYC/streaming-bot/discussions)
+- 🐛 **المشاكل**: [GitHub Issues](https://github.com/kerlif/streaming-bot/issues)
+- 💬 **النقاشات**: [GitHub Discussions](https://github.com/kerlif/streaming-bot/discussions)
 
 ### 👨‍💻 التطوير
 
@@ -992,6 +986,6 @@ git push origin feature/AmazingFeature
 
 Made with ❤️ and 🔐 by the Hardened Edition contributors
 
-**Last Updated**: July 2026 · **Version**: 2.0.0 Hardened
+**Last Updated**: November 2026 · **Version**: 2.4.0 Hardened
 
 </div>
