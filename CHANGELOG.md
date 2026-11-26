@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-11-26
+
+### Fixed
+- 🩹 HLS playlists whose segments come from extensionless URLs (e.g. `…/seg?d=…`) failed with `Invalid data found`: FFmpeg's HLS demuxer (`test_segment` in `hls.c`) rejects segments whose URL extension doesn't match the detected format, and an extensionless URL never matches. The bot now passes `-extension_picky 0 -allowed_extensions ALL -allowed_segment_extensions ALL` before `-i` for `.m3u8` inputs in the FFmpeg stream command and in the 🧪 ffprobe check. `-allowed_segment_extensions ALL` alone does not fix it — `-extension_picky 0` is the decisive option. No change to the v2.5.0 playlist-headers behaviour.
+
 ## [2.5.0] - 2026-11-26
 
 ### Added

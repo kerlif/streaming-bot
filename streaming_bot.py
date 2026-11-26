@@ -1,6 +1,16 @@
 """
-Streaming Bot - Hardened Edition v2.5.0
+Streaming Bot - Hardened Edition v2.5.1
 =======================================
+ميزات v2.5.1:
+- [الأهم] إصلاح بث قوائم HLS التي تعيد مقاطع بلا امتداد (مثل روابط
+  ‎/seg?d=...‎): مفسّر HLS في FFmpeg يرفضها افتراضياً (test_segment في
+  hls.c: امتداد المقطع يجب أن يطابق صيغته المكتشفة، والرابط بلا امتداد
+  يسقط في الفحص فيفشل البث بـ «Invalid data found») — خيارات
+  ‎-extension_picky 0 -allowed_extensions ALL -allowed_segment_extensions ALL‎
+  قبل ‎-i‎ لقوائم ‎.m3u8‎ في أمر FFmpeg وفي فحص ffprobe (🧪) تحلّها.
+  (‏-allowed_segment_extensions ALL‏ وحدها لا تكفي.)
+- لا تغيير في الترويسات أو في سياسة قوائم M3U من v2.5.0.
+
 ميزات v2.5.0:
 - [الأهم] استخدام إعدادات ملف M3U نفسه عند البث: الترويسات المخصصة المذكورة
   داخل القائمة (#EXTVLCOPT:http-user-agent / http-referrer و #EXTHTTP:{...})
@@ -872,6 +882,13 @@ def _build_ffmpeg_cmd_iptv(m3u_url: str, full_dest: str,
     opts = _http_input_opts(m3u_url, reconnect_at_eof="0", delay="10", headers=headers)
     if urlparse(m3u_url).path.lower().endswith(".m3u8"):
         opts += ["-live_start_index", "-1"]  # خاص بـ HLS فقط
+        # v2.5.1: قوائم HLS التي تعيد مقاطع بلا امتداد (مثل /seg?d=...) يرفضها
+        # مفسّر HLS في FFmpeg افتراضياً (test_segment في hls.c) فيفشل البث بـ
+        # «Invalid data found» — -extension_picky 0 هو المفتاح الحاسم، والخياران
+        # الآخران حزام أمان؛ -allowed_segment_extensions ALL وحدها لا تكفي.
+        opts += ["-extension_picky", "0",
+                 "-allowed_extensions", "ALL",
+                 "-allowed_segment_extensions", "ALL"]
     return [
         "ffmpeg", *_QUIET, *opts,
         "-i", m3u_url,
@@ -1134,6 +1151,11 @@ async def _probe_source(url: str, stream_type: str,
     cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams"]
     if urlparse(target).scheme in ("http", "https"):
         cmd += ["-headers", _headers_block(headers, target), "-rw_timeout", "15000000"]
+        if urlparse(target).path.lower().endswith(".m3u8"):
+            # v2.5.1: نفس إصلاح البث — مقاطع HLS بلا امتداد تُرفض افتراضياً.
+            cmd += ["-extension_picky", "0",
+                    "-allowed_extensions", "ALL",
+                    "-allowed_segment_extensions", "ALL"]
     cmd.append(target)
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -2292,7 +2314,7 @@ def main() -> None:
             "Set ADMIN_IDS=123456,789012 in .env"
         )
 
-    logger.info("🤖 Starting Streaming Bot (hardened v2.5.0)...")
+    logger.info("🤖 Starting Streaming Bot (hardened v2.5.1)...")
 
     application = Application.builder().token(bot_token).build()
     application.add_error_handler(error_handler)
