@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-11-26
+
+### Added
+- 📋 M3U playlists: add a `.m3u` / `.m3u8` file or direct URL with `/add_m3u`, browse channels with `/channels` (8 per page), tap to select, then `/start_stream` to broadcast.
+- 🔑 Per-channel headers from the user's own playlist file (`#EXTVLCOPT:http-user-agent` / `http-referrer`, `#EXTHTTP:{...}`) are extracted, stored in the database, and passed to FFmpeg and ffprobe as-is — on channel select, on probe (🧪), and on resume after restart. The bot adds no headers itself (only the neutral default `User-Agent` when absent); the user alone is responsible for their playlist's content.
+- 🗄️ Automatic database migration: `playlists` table and `headers` column on `settings` are added to existing databases.
+- ⚙️ New optional env vars: `MAX_PLAYLIST_CHANNELS` (default 500), `M3U_MAX_BYTES` (default 5 MB).
+
+### Changed
+- 🧹 Removed the unused `subprocess` and `TelegramError` imports; stripped trailing whitespace.
+
 ## [2.4.0] - 2026-11-26
 
 ### Added

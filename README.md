@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Streaming Bot Banner](https://img.shields.io/badge/Version-2.4.0%20Hardened-blue?style=for-the-badge)
+![Streaming Bot Banner](https://img.shields.io/badge/Version-2.5.0%20Hardened-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge)
@@ -34,7 +34,16 @@
 
 Designed for broadcasters who need a **secure, multi-tenant, maintainable** stream-relay bot.
 
+> ⚠️ **Playlist headers policy (v2.5.0):** when you stream a channel from your own M3U playlist, the bot passes the headers **you** wrote inside that file (`#EXTVLCOPT:http-user-agent` / `http-referrer` and `#EXTHTTP:{...}`) to FFmpeg and ffprobe exactly as written. The bot is a player and publisher only: it adds no headers of its own (only the neutral default `User-Agent` when yours is absent) and invents no bypass mechanism. **You alone are responsible for the content you send and for anything your playlist file contains.**
+
 ### 🔥 What's New in the Hardened Edition
+
+#### 🆕 v2.5.0 — M3U playlists with per-channel headers
+
+- 📋 **M3U playlists:** send a `.m3u` / `.m3u8` file or a direct playlist URL with `/add_m3u`, browse your channels with `/channels` (8 per page), tap a channel to select it, then `/start_stream` to broadcast it.
+- 🔑 **Your playlist's own headers:** custom headers written inside your M3U file (`#EXTVLCOPT:http-user-agent` / `http-referrer`, `#EXTHTTP:{...}`) are extracted per channel, stored in the database, and passed to FFmpeg and ffprobe as-is — when selecting a channel, when testing it (🧪), and when resuming after a restart. See the policy note above.
+- 📦 **Limits:** 500 channels per file, 5 MB max file size (configurable via `MAX_PLAYLIST_CHANNELS` / `M3U_MAX_BYTES`).
+- 🗄️ **Automatic migration:** existing databases gain a `playlists` table and a `headers` column on `settings` automatically; no manual step needed.
 
 This is a **complete security-focused rewrite** addressing 10 critical issues from the original:
 
@@ -95,6 +104,10 @@ This is a **complete security-focused rewrite** addressing 10 critical issues fr
     <td>Non-root user, <code>cap_drop: ALL</code>, <code>no-new-privileges</code>, real healthcheck</td>
   </tr>
   <tr>
+    <td>📋 <b>M3U Playlists</b></td>
+    <td>Save a playlist file or URL (<code>/add_m3u</code>), browse channels (<code>/channels</code>), per-channel headers from the file itself</td>
+  </tr>
+  <tr>
     <td>♻️ <b>Auto-resume on Restart</b></td>
     <td>Active streams are restored on bot restart (<code>post_init</code>)</td>
   </tr>
@@ -114,7 +127,7 @@ This is a **complete security-focused rewrite** addressing 10 critical issues fr
 │ • python-telegram-bot v21.6 (async)         │
 │ • FFmpeg (video processing, list args)      │
 │ • yt-dlp 2024.8.6 (YouTube extraction)      │
-│ • SQLite3 (settings + users tables)         │
+│ • SQLite3 (settings + users + playlists tables)         │
 │ • asyncio (per-user stream workers)         │
 │ • Docker (non-root, hardened)               │
 └─────────────────────────────────────────────┘
@@ -179,10 +192,27 @@ docker compose logs -f
 | `/setup` | Launch 5-step setup wizard (conversational) | All authorized users |
 | `/start_stream` | Start streaming (also via button) | All authorized users |
 | `/stop_stream` | Stop your active stream (also via button) | All authorized users |
+| `/add_m3u` | Add an M3U playlist (file or direct URL) | All authorized users |
+| `/channels` | Browse saved M3U channels, tap to select one | All authorized users |
 | `/status` | Show your stream status + FFmpeg PID | All authorized users |
 | `/language` | Switch interface language (AR/EN) | All authorized users |
 | `/help` | Show help with legal notice | All authorized users |
 | `/authorize <user_id>` | Authorize a new user | **Admins only** |
+
+### 🔔 Notifications (alert excerpts)
+
+The bot sends these messages to you (in your interface language where translated; failure alerts are Arabic). What you will see:
+
+| When | Message |
+|------|---------|
+| Stream started | 🟢 Stream started successfully and is being monitored. |
+| Stream stopped | ⏹️ Stream stopped and resources released. |
+| Stream failed to start | ❌ Failed to start stream: `<error>` |
+| Stream keeps failing (after 3 short runs) | ⚠️ The stream keeps failing. `<last FFmpeg error lines>` |
+| yt-dlp cannot extract a YouTube live URL | ⚠️ تعذّر استخراج رابط يوتيوب (yt-dlp). تأكد أن البث مباشر وأن yt-dlp محدّث. |
+| Playlist saved | ✅ Saved **N** channels. Open the list with /channels, pick a channel, then send /start_stream to broadcast it. |
+| Channel selected | ✅ Channel selected: **name**. Headers from the playlist file will be used as-is: `headers` |
+| Playlist file too big | ⚠️ File exceeds the allowed size (5MB). |
 
 ### 💬 Conversation Flow (Setup Wizard)
 
@@ -499,7 +529,16 @@ This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) 
 
 مُصمَّم للمذيعين الذين يحتاجون بوت ترحيل بث **آمن ومتعدد المستخدمين وقابل للصيانة**.
 
+> ⚠️ **سياسة ترويسات قوائم التشغيل (v2.5.0):** عند بث قناة من قائمة M3U الخاصة بك، يمرّر البوت الترويسات **التي كتبتها أنت** داخل ذلك الملف (`#EXTVLCOPT:http-user-agent` / `http-referrer` و`#EXTHTTP:{...}`) إلى FFmpeg وffprobe كما هي تماماً. البوت مشغّل وناشر فقط: لا يضيف أي ترويسات من عنده (عدا `User-Agent` الافتراضية المحايدة عند غياب ترويساتك) ولا يخترع أي آلية تجاوز. **أنت وحدك المسؤول عن المحتوى الذي ترسله وعن أي شيء تحتويه قائمة التشغيل الخاصة بك.**
+
 ### 🔥 ما الجديد في النسخة المُحصَّنة
+
+#### 🆕 v2.5.0 — قوائم M3U مع ترويسات لكل قناة
+
+- 📋 **قوائم M3U:** أرسل ملف `.m3u` / `.m3u8` أو رابطاً مباشراً لقائمة عبر `/add_m3u`، وتصفّح قنواتك عبر `/channels` (8 في كل صفحة)، واضغط على قناة لتحديدها، ثم `/start_stream` لبثها.
+- 🔑 **ترويسات ملفك نفسه:** الترويسات المخصصة المكتوبة داخل ملف M3U الخاص بك (`#EXTVLCOPT:http-user-agent` / `http-referrer`، `#EXTHTTP:{...}`) تُستخرج لكل قناة، وتُحفظ في قاعدة البيانات، وتُمرَّر إلى FFmpeg وffprobe كما هي — عند اختيار القناة، وعند اختبارها (🧪)، وعند استئناف البث بعد إعادة التشغيل. راجع سياسة الترويسات أعلاه.
+- 📦 **الحدود:** 500 قناة لكل ملف، وحجم أقصى 5MB للملف (قابل للضبط عبر `MAX_PLAYLIST_CHANNELS` / `M3U_MAX_BYTES`).
+- 🗄️ **ترحيل تلقائي:** قواعد البيانات القديمة تحصل تلقائياً على جدول `playlists` وعمود `headers` في `settings`؛ لا خطوة يدوية مطلوبة.
 
 هذه **إعادة كتابة كاملة مُركَّزة على الأمان** تُعالج 10 مشاكل حرجة من النسخة الأصلية:
 
@@ -558,6 +597,10 @@ This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) 
   <tr>
     <td>🐳 <b>Docker مُحصَّن</b></td>
     <td>مستخدم غير root، <code>cap_drop: ALL</code>، <code>no-new-privileges</code>، healthcheck حقيقي</td>
+  </tr>
+  <tr>
+    <td>📋 <b>قوائم M3U</b></td>
+    <td>حفظ ملف قائمة أو رابط (<code>/add_m3u</code>)، تصفح القنوات (<code>/channels</code>)، ترويسات لكل قناة من الملف نفسه</td>
   </tr>
   <tr>
     <td>♻️ <b>استئناف تلقائي عند إعادة التشغيل</b></td>
@@ -644,10 +687,27 @@ docker compose logs -f
 | `/setup` | بدء معالج الضبط من 5 خطوات (تفاعلي) | كل المستخدمين المصرّح لهم |
 | `/start_stream` | بدء البث (أو عبر الزر) | كل المستخدمين المصرّح لهم |
 | `/stop_stream` | إيقاف بثك النشط (أو عبر الزر) | كل المستخدمين المصرّح لهم |
+| `/add_m3u` | إضافة قائمة M3U (ملف أو رابط مباشر) | كل المستخدمين المصرّح لهم |
+| `/channels` | تصفح قنوات M3U المحفوظة، واضغط لتحديد قناة | كل المستخدمين المصرّح لهم |
 | `/status` | عرض حالة البث + PID لـ FFmpeg | كل المستخدمين المصرّح لهم |
 | `/language` | تبديل لغة الواجهة (AR/EN) | كل المستخدمين المصرّح لهم |
 | `/help` | عرض المساعدة مع التحذير القانوني | كل المستخدمين المصرّح لهم |
 | `/authorize <user_id>` | تخويل مستخدم جديد | **المدراء فقط** |
+
+### 🔔 التنبيهات (مقتطفات)
+
+هذه الرسائل التي يرسلها البوت لك (بلغة واجهتك حيث تُترجم؛ تنبيهات الأعطال بالعربية). ما ستراه:
+
+| متى | الرسالة |
+|-----|---------|
+| بدء البث | 🟢 تم تشغيل البث بنجاح وهو تحت المراقبة. |
+| إيقاف البث | ⏹️ تم إيقاف البث وتحرير الموارد. |
+| فشل بدء البث | ❌ فشل تشغيل البث: `<الخطأ>` |
+| البث يفشل بشكل متكرر (بعد 3 مرات قصيرة) | ⚠️ البث يفشل بشكل متكرر. `<آخر أسطر خطأ FFmpeg>` |
+| yt-dlp لم يستطع استخراج رابط يوتيوب | ⚠️ تعذّر استخراج رابط يوتيوب (yt-dlp). تأكد أن البث مباشر وأن yt-dlp محدّث. |
+| حفظ القائمة | ✅ تم حفظ **N** قناة. افتح القائمة بـ /channels واختر قناة، ثم أرسل /start_stream للبث منها. |
+| تحديد قناة | ✅ تم تحديد القناة: **الاسم**. ترويسات من ملف القائمة ستُستخدم كما هي: `الترويسات` |
+| ملف القائمة أكبر من الحد | ⚠️ الملف أكبر من الحد المسموح (5MB). |
 
 ### 💬 مسار المحادثة (معالج الضبط)
 
@@ -986,6 +1046,6 @@ git push origin feature/AmazingFeature
 
 Made with ❤️ and 🔐 by the Hardened Edition contributors
 
-**Last Updated**: November 2026 · **Version**: 2.4.0 Hardened
+**Last Updated**: November 2026 · **Version**: 2.5.0 Hardened
 
 </div>

@@ -1,6 +1,17 @@
 """
-Streaming Bot - Hardened Edition v2.4.0
+Streaming Bot - Hardened Edition v2.5.0
 =======================================
+ميزات v2.5.0:
+- [الأهم] استخدام إعدادات ملف M3U نفسه عند البث: الترويسات المخصصة المذكورة
+  داخل القائمة (#EXTVLCOPT:http-user-agent / http-referrer و #EXTHTTP:{...})
+  تُستخرج وتُمرَّر إلى FFmpeg و ffprobe كما هي. البوت مشغّل وناشر فقط؛
+  المستخدم هو المسؤول الوحيد عن محتوى ما يرسله وما تحتويه قائمة M3U الخاصة
+  به من ترويسات أو آليات وصول (إن وُجدت). البوت لا يضيف ولا يخترع أي
+  آليات تجاوز بنفسه — ينفّذ ما حدّده المستخدم في ملفه حصراً.
+- تخزين ترويسات كل قناة في قاعدة البيانات واستخدامها عند اختيار القناة
+  للبث، وعند الاختبار (🧪)، وعند استئناف البث بعد إعادة التشغيل.
+- README جديد يوضّح هذه السياسة في قسمه العلوي.
+
 ميزات v2.4.0:
 - لوحة رئيسية ذكية (تُظهر بدء أو إيقاف/إعادة تشغيل حسب الحالة) + زر 🏠 + زر تحديث للحالة.
 - حذف رسالة مفتاح البث من المحادثة بعد استلامها.
@@ -43,8 +54,8 @@ import functools
 import json
 import logging
 import os
+import re
 import sqlite3
-import subprocess
 import threading
 import time
 from collections import deque
@@ -55,7 +66,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -94,6 +105,11 @@ MAX_STREAMS = int(os.getenv("MAX_STREAMS", "5"))  # 0 = بلا حد
 SETUP_TIMEOUT = int(os.getenv("SETUP_TIMEOUT", "600"))  # ثوانٍ
 PROBE_TIMEOUT = 25
 MIN_HEALTHY_RUN = 30  # ثوانٍ: تشغيل أطول من هذا يُعدّ ناجحاً ويصفّر عداد الفشل
+
+# ---- ميزة قوائم M3U ----
+MAX_PLAYLIST_CHANNELS = int(os.getenv("MAX_PLAYLIST_CHANNELS", "500"))  # حد قنوات الملف الواحد
+M3U_MAX_BYTES = int(os.getenv("M3U_MAX_BYTES", str(5 * 1024 * 1024)))   # حد حجم الملف (5MB)
+M3U_PAGE_SIZE = 8  # عدد القنوات في صفحة الاختيار
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -149,6 +165,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "btn_modify_key": "🔑 تعديل المفتاح",
         "btn_modify_channel": "📣 تعديل القناة",
         "btn_new_setup": "🆕 إعداد جديد كامل",
+        "btn_playlist": "📋 قنوات M3U",
+        "m3u_prompt": "📋 <b>إضافة قائمة M3U</b>\n\nأرسل الآن ملف <code>.m3u</code> أو <code>.m3u8</code> كوثيقة، أو الصق رابطاً مباشراً (http/https) لملف قائمة.\n\nالحد الأقصى: {max_ch} قناة / 5MB.\nللإلغاء أرسل /cancel",
+        "m3u_bad_url": "⚠️ الرابط غير صالح. أرسل رابطاً مباشراً لملف m3u يبدأ بـ http/https، أو أرسل الملف كوثيقة.",
+        "m3u_fetch_fail": "⚠️ تعذّر جلب الملف: {error}",
+        "m3u_too_big": "⚠️ الملف أكبر من الحد المسموح (5MB).",
+        "m3u_parse_fail": "⚠️ لم أجد أي قناة صالحة. تأكد أن المحتوى ملف M3U سليم (#EXTM3U / #EXTINF) أو قائمة روابط، كل رابط في سطر.",
+        "m3u_added": "✅ تم حفظ <b>{count}</b> قناة{skipped_txt}.\n\nأمثلة: {sample}\n\nافتح القائمة بـ /channels واختر قناة، ثم أرسل /start_stream للبث منها.",
+        "m3u_skipped": " (تجاهل {skipped} مدخلاً غير صالح)",
+        "m3u_empty": "📋 لا توجد قائمة قنوات محفوظة. أضف واحدة بـ /add_m3u أولاً.",
+        "m3u_list_title": "📋 قنواتك ({count}) — اضغط على قناة لتحديدها للبث:",
+        "m3u_selected": "✅ تم تحديد القناة: <b>{name}</b>{hdr_txt}\n\nأرسل /start_stream لبدء البث منها.",
+        "m3u_hdrs": "\n🔑 ترويسات من ملف القائمة ستُستخدم كما هي: <code>{hdrs}</code>",
+        "m3u_need_setup": "⚠️ أكمل /setup أولاً (خادم RTMP + المفتاح + قناة التنبيهات)، ثم اختر قناة من القائمة.",
+        "m3u_stop_first": "⚠️ البث يعمل حالياً. أوقفه بـ /stop_stream ثم اختر القناة الجديدة.",
+        "m3u_cleared": "🗑️ تم حذف القائمة المحفوظة.",
+        "m3u_btn_clear": "🗑️ حذف القائمة",
         "setup_intro": "⚙️ <b>معالج ضبط الإعدادات</b>\n\nأرسل <b>رابط البث</b> (YouTube / m3u8 / راديو):",
         "setup_menu_title": "⚙️ <b>لديك إعدادات محفوظة</b>\n\nاختر ما تريد فعله:",
         "setup_current_label": "<b>الإعدادات الحالية:</b>",
@@ -245,6 +277,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "btn_modify_key": "🔑 Modify key",
         "btn_modify_channel": "📣 Modify channel",
         "btn_new_setup": "🆕 Full new setup",
+        "btn_playlist": "📋 M3U Channels",
+        "m3u_prompt": "📋 <b>Add M3U playlist</b>\n\nSend a <code>.m3u</code> / <code>.m3u8</code> file as a document, or paste a direct (http/https) URL to a playlist file.\n\nLimits: {max_ch} channels / 5MB.\nSend /cancel to abort.",
+        "m3u_bad_url": "⚠️ Invalid URL. Send a direct http/https link to an m3u file, or upload the file as a document.",
+        "m3u_fetch_fail": "⚠️ Failed to fetch the file: {error}",
+        "m3u_too_big": "⚠️ File exceeds the allowed size (5MB).",
+        "m3u_parse_fail": "⚠️ No valid channels found. Make sure the content is a proper M3U file (#EXTM3U / #EXTINF) or a plain list with one URL per line.",
+        "m3u_added": "✅ Saved <b>{count}</b> channels{skipped_txt}.\n\nExamples: {sample}\n\nOpen the list with /channels, pick a channel, then send /start_stream to broadcast it.",
+        "m3u_skipped": " ({skipped} invalid entries ignored)",
+        "m3u_empty": "📋 No saved playlist. Add one with /add_m3u first.",
+        "m3u_list_title": "📋 Your channels ({count}) — tap a channel to select it for streaming:",
+        "m3u_selected": "✅ Channel selected: <b>{name}</b>{hdr_txt}\n\nSend /start_stream to broadcast it.",
+        "m3u_hdrs": "\n🔑 Headers from the playlist file will be used as-is: <code>{hdrs}</code>",
+        "m3u_need_setup": "⚠️ Complete /setup first (RTMP server + key + notification channel), then pick a channel from the list.",
+        "m3u_stop_first": "⚠️ A stream is currently running. Stop it with /stop_stream, then select the new channel.",
+        "m3u_cleared": "🗑️ Saved playlist deleted.",
+        "m3u_btn_clear": "🗑️ Delete playlist",
         "setup_intro": "⚙️ <b>Setup Wizard</b>\n\nSend the <b>stream URL</b> (YouTube / m3u8 / radio):",
         "setup_menu_title": "⚙️ <b>You have saved settings</b>\n\nChoose what to do:",
         "setup_current_label": "<b>Current settings:</b>",
@@ -353,6 +401,7 @@ def init_db() -> None:
                 server_url TEXT NOT NULL,
                 stream_key TEXT NOT NULL,
                 channel_id TEXT NOT NULL,
+                headers TEXT DEFAULT '{}',
                 is_running INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -363,23 +412,53 @@ def init_db() -> None:
                 is_authorized INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS playlists (
+                user_id INTEGER NOT NULL,
+                idx INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                logo TEXT DEFAULT '',
+                headers TEXT DEFAULT '{}',
+                PRIMARY KEY (user_id, idx)
+            );
             """
         )
         conn.commit()
+    # ترقية قواعد البيانات القديمة: إضافة عمود headers إن لم يكن موجوداً
+    with _db_lock, get_db() as conn:
+        for table in ("settings", "playlists"):
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if "headers" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN headers TEXT DEFAULT '{{}}'")
+                conn.commit()
     logger.info("✅ Database initialized")
 
 
-def save_settings(user_id: int, m3u_url: str, server_url: str, stream_key: str, channel_id: str) -> None:
+def save_settings(user_id: int, m3u_url: str, server_url: str, stream_key: str, channel_id: str,
+                  headers: Optional[dict] = None) -> None:
     with _db_lock, get_db() as conn:
-        conn.execute(
-            "INSERT INTO settings (user_id, m3u_url, server_url, stream_key, channel_id, is_running, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(user_id) DO UPDATE SET "
-            "m3u_url=excluded.m3u_url, server_url=excluded.server_url, "
-            "stream_key=excluded.stream_key, channel_id=excluded.channel_id, "
-            "is_running=0, updated_at=CURRENT_TIMESTAMP",
-            (user_id, m3u_url, server_url, stream_key, channel_id),
-        )
+        if headers is None:
+            # احتفظ بالترويسات المحفوظة سابقاً إن لم تُمرَّر ترويسات جديدة
+            conn.execute(
+                "INSERT INTO settings (user_id, m3u_url, server_url, stream_key, channel_id, is_running, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(user_id) DO UPDATE SET "
+                "m3u_url=excluded.m3u_url, server_url=excluded.server_url, "
+                "stream_key=excluded.stream_key, channel_id=excluded.channel_id, "
+                "is_running=0, updated_at=CURRENT_TIMESTAMP",
+                (user_id, m3u_url, server_url, stream_key, channel_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO settings (user_id, m3u_url, server_url, stream_key, channel_id, headers, is_running, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(user_id) DO UPDATE SET "
+                "m3u_url=excluded.m3u_url, server_url=excluded.server_url, "
+                "stream_key=excluded.stream_key, channel_id=excluded.channel_id, "
+                "headers=excluded.headers, is_running=0, updated_at=CURRENT_TIMESTAMP",
+                (user_id, m3u_url, server_url, stream_key, channel_id,
+                 json.dumps(headers, ensure_ascii=False)),
+            )
         conn.commit()
 
 
@@ -395,7 +474,7 @@ def update_status(user_id: int, is_running: bool) -> None:
 def get_settings(user_id: int) -> Optional[sqlite3.Row]:
     with _db_lock, get_db() as conn:
         cur = conn.execute(
-            "SELECT m3u_url, server_url, stream_key, channel_id, is_running FROM settings WHERE user_id=?",
+            "SELECT m3u_url, server_url, stream_key, channel_id, headers, is_running FROM settings WHERE user_id=?",
             (user_id,),
         )
         return cur.fetchone()
@@ -404,9 +483,75 @@ def get_settings(user_id: int) -> Optional[sqlite3.Row]:
 def get_active_streams() -> list[sqlite3.Row]:
     with _db_lock, get_db() as conn:
         cur = conn.execute(
-            "SELECT user_id, m3u_url, server_url, stream_key FROM settings WHERE is_running=1"
+            "SELECT user_id, m3u_url, server_url, stream_key, headers FROM settings WHERE is_running=1"
         )
         return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# قوائم M3U المحفوظة (لكل مستخدم)
+# ---------------------------------------------------------------------------
+def save_playlist(user_id: int, channels: list[tuple[str, str, str, dict]]) -> int:
+    """يستبدل قائمة المستخدم بقنوات جديدة. كل عنصر: (الاسم, الرابط, الشعار, الترويسات)."""
+    with _db_lock, get_db() as conn:
+        conn.execute("DELETE FROM playlists WHERE user_id=?", (user_id,))
+        conn.executemany(
+            "INSERT INTO playlists (user_id, idx, name, url, logo, headers) VALUES (?, ?, ?, ?, ?, ?)",
+            [(user_id, i, name, url, logo, json.dumps(headers, ensure_ascii=False))
+             for i, (name, url, logo, headers) in enumerate(channels)],
+        )
+        conn.commit()
+    return len(channels)
+
+
+def get_playlist(user_id: int) -> list[sqlite3.Row]:
+    with _db_lock, get_db() as conn:
+        cur = conn.execute(
+            "SELECT idx, name, url, logo, headers FROM playlists WHERE user_id=? ORDER BY idx", (user_id,)
+        )
+        return cur.fetchall()
+
+
+def get_playlist_channel(user_id: int, idx: int) -> Optional[sqlite3.Row]:
+    with _db_lock, get_db() as conn:
+        cur = conn.execute(
+            "SELECT idx, name, url, headers FROM playlists WHERE user_id=? AND idx=?", (user_id, idx)
+        )
+        return cur.fetchone()
+
+
+def clear_playlist(user_id: int) -> None:
+    with _db_lock, get_db() as conn:
+        conn.execute("DELETE FROM playlists WHERE user_id=?", (user_id,))
+        conn.commit()
+
+
+def update_stream_url(user_id: int, url: str, headers: Optional[dict] = None) -> bool:
+    """يحدّث رابط البث (وترويساته إن مرّرت) مع الحفاظ على باقي إعدادات المستخدم."""
+    with _db_lock, get_db() as conn:
+        if headers is None:
+            cur = conn.execute(
+                "UPDATE settings SET m3u_url=?, is_running=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (url, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE settings SET m3u_url=?, headers=?, is_running=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (url, json.dumps(headers, ensure_ascii=False), user_id),
+            )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def load_headers(raw) -> dict:
+    """يفك ترويسات JSON مخزّنة بأمان ويعيد dict ({} عند أي خطأ)."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (TypeError, ValueError):
+        return {}
 
 
 _lang_cache: dict[int, str] = {}
@@ -529,6 +674,92 @@ def type_label(user_id: int, stream_type: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# محلل M3U (يستخرج ترويسات ملف القائمة نفسه وينفّذها كما حددها المستخدم)
+# ---------------------------------------------------------------------------
+_TVG_NAME_RE = re.compile(r'tvg-name="([^"]*)"', re.IGNORECASE)
+_TVG_LOGO_RE = re.compile(r'tvg-logo="([^"]*)"', re.IGNORECASE)
+_EXTVLCOPT_RE = re.compile(r'#EXTVLCOPT:([A-Za-z0-9_-]+)\s*=\s*(.*)')
+_EXTHTTP_RE = re.compile(r'#EXTHTTP:\s*(\{.*\})')
+
+# توجيهات VLC المتعلقة بـ HTTP التي يجب تمريرها إلى FFmpeg كما هي.
+# تُترجم أسماء VLC إلى أسماء ترويسات HTTP القياسية؛ أي توجيه آخر
+# (network-caching وغيره) لا علاقة له بالبث فيُتجاهل.
+_VLCOPT_TO_HEADER = {
+    "http-user-agent": "User-Agent",
+    "http-referrer": "Referer",   # يدعم أيضاً http-referrer بالتهجئة الأمريكية
+    "http-referer": "Referer",
+    "user-agent": "User-Agent",
+    "referrer": "Referer",
+    "referer": "Referer",
+}
+
+
+def parse_m3u(text: str) -> tuple[list[tuple[str, str, str, dict]], int]:
+    """يحلل محتوى M3U ويعيد (القنوات، عدد المتجاهل).
+
+    كل قناة: (الاسم، الرابط، الشعار، الترويسات dict).
+    يقبل ملفات #EXTM3U القياسية وقوائم الروابط الخام (رابط لكل سطر).
+
+    إعدادات الملف نفسه: أي ترويسات مخصصة يحددها المستخدم داخل القائمة تُستخرج
+    وتُخزَّن مع قناتها وتُمرَّر إلى FFmpeg/ffprobe كما هي:
+      - #EXTVLCOPT:http-user-agent=... / #EXTVLCOPT:http-referrer=...
+      - #EXTHTTP:{"User-Agent": "...", "Referer": "...", ...}
+    البوت مشغّل/ناشر فقط ولا يضيف أي ترويسات من عنده (عدا User-Agent
+    الافتراضي عند غيابه) — ما يرسله المستخدم على مسؤوليته وحده.
+    """
+    channels: list[tuple[str, str, str, dict]] = []
+    skipped = 0
+    pending_name = ""
+    pending_logo = ""
+    pending_headers: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF"):
+            title = line.split(",", 1)[1].strip() if "," in line else ""
+            m_name = _TVG_NAME_RE.search(line)
+            m_logo = _TVG_LOGO_RE.search(line)
+            pending_name = (m_name.group(1).strip() if m_name and m_name.group(1).strip() else title)
+            pending_logo = m_logo.group(1).strip() if m_logo else ""
+            continue
+        if line.startswith("#EXTVLCOPT:"):
+            m = _EXTVLCOPT_RE.match(line)
+            if m:
+                header = _VLCOPT_TO_HEADER.get(m.group(1).lower())
+                value = m.group(2).strip()
+                if header and value:
+                    pending_headers[header] = value
+            continue
+        if line.startswith("#EXTHTTP:"):
+            m = _EXTHTTP_RE.match(line)
+            if m:
+                try:
+                    obj = json.loads(m.group(1))
+                    if isinstance(obj, dict):
+                        pending_headers.update({str(k): str(v) for k, v in obj.items()})
+                except ValueError:
+                    pass
+            continue
+        if line.startswith("#"):
+            continue
+        # سطر رابط
+        url = line.split()[0] if line and " " in line else line
+        if not is_valid_stream_url(url):
+            skipped += 1
+            pending_name, pending_logo, pending_headers = "", "", {}
+            continue
+        if len(channels) >= MAX_PLAYLIST_CHANNELS:
+            skipped += 1
+            pending_name, pending_logo, pending_headers = "", "", {}
+            continue
+        name = pending_name or (url.rsplit("/", 1)[-1][:60] or "channel")
+        channels.append((name[:80], url, pending_logo[:300], pending_headers))
+        pending_name, pending_logo, pending_headers = "", "", {}
+    return channels, skipped
+
+
+# ---------------------------------------------------------------------------
 # إدارة عمليات FFmpeg (لكل مستخدم)
 # ---------------------------------------------------------------------------
 @dataclass
@@ -584,12 +815,25 @@ async def _extract_youtube_live_url(yt_url: str) -> Optional[str]:
 _QUIET = ["-nostdin", "-nostats", "-loglevel", "warning"]
 
 
-def _http_input_opts(url: str, reconnect_at_eof: str = "1", delay: str = "5") -> list[str]:
-    """خيارات reconnect/headers تصلح لـ http(s) فقط؛ rtmp/rtsp ترفضها."""
+def _headers_block(headers: Optional[dict], url: str) -> str:
+    """يبني سلسلة ترويسات FFmpeg من إعدادات ملف m3u للمستخدم.
+    ترويسات المستخدم تُمرّر كما هي؛ User-Agent الافتراضي يُستخدم فقط عند غيابه."""
+    merged: dict[str, str] = {}
+    if not any(k.lower() == "user-agent" for k in (headers or {})):
+        merged["User-Agent"] = DEFAULT_USER_AGENT
+    if headers:
+        merged.update(headers)
+    return "".join(f"{k}: {v}\r\n" for k, v in merged.items())
+
+
+def _http_input_opts(url: str, reconnect_at_eof: str = "1", delay: str = "5",
+                     headers: Optional[dict] = None) -> list[str]:
+    """خيارات reconnect/headers تصلح لـ http(s) فقط؛ rtmp/rtsp ترفضها.
+    الترويسات تأتي من إعدادات ملف m3u الخاص بالمستخدم إن وُجدت."""
     scheme = urlparse(url).scheme
     if scheme in ("http", "https"):
         return [
-            "-headers", f"User-Agent: {DEFAULT_USER_AGENT}\r\n",
+            "-headers", _headers_block(headers, url),
             "-timeout", str(FFMPEG_TIMEOUT),
             "-reconnect", "1", "-reconnect_at_eof", reconnect_at_eof,
             "-reconnect_streamed", "1", "-reconnect_delay_max", delay,
@@ -599,19 +843,21 @@ def _http_input_opts(url: str, reconnect_at_eof: str = "1", delay: str = "5") ->
     return []
 
 
-def _build_ffmpeg_cmd_youtube(live_url: str, full_dest: str) -> list[str]:
+def _build_ffmpeg_cmd_youtube(live_url: str, full_dest: str,
+                              headers: Optional[dict] = None) -> list[str]:
     return [
-        "ffmpeg", *_QUIET, *_http_input_opts(live_url),
+        "ffmpeg", *_QUIET, *_http_input_opts(live_url, headers=headers),
         "-re", "-i", live_url,
         "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
         "-f", "flv", full_dest,
     ]
 
 
-def _build_ffmpeg_cmd_radio(m3u_url: str, full_dest: str) -> list[str]:
+def _build_ffmpeg_cmd_radio(m3u_url: str, full_dest: str,
+                            headers: Optional[dict] = None) -> list[str]:
     return [
         "ffmpeg", *_QUIET, "-f", "lavfi", "-i", "color=c=black:s=640x360:r=10",
-        *_http_input_opts(m3u_url),
+        *_http_input_opts(m3u_url, headers=headers),
         "-re", "-i", m3u_url,
         "-map", "0:v:0", "-map", "1:a:0",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
@@ -621,8 +867,9 @@ def _build_ffmpeg_cmd_radio(m3u_url: str, full_dest: str) -> list[str]:
     ]
 
 
-def _build_ffmpeg_cmd_iptv(m3u_url: str, full_dest: str) -> list[str]:
-    opts = _http_input_opts(m3u_url, reconnect_at_eof="0", delay="10")
+def _build_ffmpeg_cmd_iptv(m3u_url: str, full_dest: str,
+                           headers: Optional[dict] = None) -> list[str]:
+    opts = _http_input_opts(m3u_url, reconnect_at_eof="0", delay="10", headers=headers)
     if urlparse(m3u_url).path.lower().endswith(".m3u8"):
         opts += ["-live_start_index", "-1"]  # خاص بـ HLS فقط
     return [
@@ -650,6 +897,7 @@ async def _drain_stderr(proc, sp: Optional[StreamProcess]) -> None:
 async def _stream_worker(
     user_id: int, m3u_url: str, server_url: str, stream_key: str,
     stream_type: str, stop_event: asyncio.Event,
+    headers: Optional[dict] = None,
 ) -> None:
     """عامل بث يعمل في coroutine منفصلة لكل مستخدم."""
     if not server_url.endswith("/"):
@@ -673,11 +921,11 @@ async def _stream_worker(
                     except asyncio.TimeoutError:
                         pass
                     continue
-                cmd = _build_ffmpeg_cmd_youtube(live_url, full_dest)
+                cmd = _build_ffmpeg_cmd_youtube(live_url, full_dest, headers=headers)
             elif stream_type == "radio":
-                cmd = _build_ffmpeg_cmd_radio(m3u_url, full_dest)
+                cmd = _build_ffmpeg_cmd_radio(m3u_url, full_dest, headers=headers)
             else:
-                cmd = _build_ffmpeg_cmd_iptv(m3u_url, full_dest)
+                cmd = _build_ffmpeg_cmd_iptv(m3u_url, full_dest, headers=headers)
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -809,7 +1057,7 @@ def _launch_error_text(user_id: int, e: Exception) -> str:
 
 async def launch_stream(
     user_id: int, m3u_url: str, server_url: str, stream_key: str,
-    force: bool = False,
+    force: bool = False, headers: Optional[dict] = None,
 ) -> bool:
     """إطلاق بث جديد للمستخدم.
 
@@ -837,7 +1085,8 @@ async def launch_stream(
     stream_type = detect_stream_type(m3u_url)
     stop_event = asyncio.Event()
     task = asyncio.create_task(
-        _stream_worker(user_id, m3u_url, server_url, stream_key, stream_type, stop_event)
+        _stream_worker(user_id, m3u_url, server_url, stream_key, stream_type, stop_event,
+                       headers=headers or {})
     )
     async with _processes_lock:
         _processes[user_id] = StreamProcess(
@@ -873,8 +1122,10 @@ async def get_stream_pid(user_id: int) -> Optional[int]:
 # ---------------------------------------------------------------------------
 # التحقق من صلاحيات القناة
 # ---------------------------------------------------------------------------
-async def _probe_source(url: str, stream_type: str) -> tuple[bool, str]:
-    """يفحص الرابط عبر ffprobe ويعيد (نجاح, ملخص/خطأ). لا يستخدم shell."""
+async def _probe_source(url: str, stream_type: str,
+                        headers: Optional[dict] = None) -> tuple[bool, str]:
+    """يفحص الرابط عبر ffprobe ويعيد (نجاح, ملخص/خطأ). لا يستخدم shell.
+    يستخدم ترويسات ملف m3u الخاص بالمستخدم إن وُجدت."""
     target = url
     if stream_type == "youtube":
         target = await _extract_youtube_live_url(url)
@@ -882,7 +1133,7 @@ async def _probe_source(url: str, stream_type: str) -> tuple[bool, str]:
             return False, "yt-dlp could not extract a live URL"
     cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams"]
     if urlparse(target).scheme in ("http", "https"):
-        cmd += ["-user_agent", DEFAULT_USER_AGENT, "-rw_timeout", "15000000"]
+        cmd += ["-headers", _headers_block(headers, target), "-rw_timeout", "15000000"]
     cmd.append(target)
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -943,6 +1194,7 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(t(user_id, "btn_setup"), callback_data="cmd:setup"),
+            InlineKeyboardButton(t(user_id, "btn_playlist"), callback_data="cmd:channels"),
             InlineKeyboardButton(t(user_id, "btn_status"), callback_data="cmd:status"),
         ],
         stream_row,
@@ -1096,6 +1348,8 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "cmd:setup":
         await start_setup_conversation(update, context)
+    elif data == "cmd:channels":
+        await show_channels_list(update, context, page=0, edit=True)
     elif data == "cmd:start_stream":
         await do_start_stream(update, context, edit=True)
     elif data == "cmd:stop_stream":
@@ -1105,20 +1359,20 @@ async def on_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     elif data == "cmd:status":
         await do_status(update, context, edit=True)
     elif data == "cmd:language":
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "language_select"),
             parse_mode=ParseMode.HTML,
             reply_markup=language_keyboard(user_id),
         )
     elif data == "cmd:help":
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "help_text"),
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(user_id),
         )
     elif data == "cmd:cancel":
         # إلغاء خارج سياق setup
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_cancelled"),
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(user_id),
@@ -1143,11 +1397,224 @@ async def on_language_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     lang = query.data.split(":")[1]
     set_user_language(user_id, lang)
     lang_name = t(user_id, "lang_ar" if lang == "ar" else "lang_en")
-    await safe_edit(query, 
+    await safe_edit(query,
         t(user_id, "language_changed").format(lang_name=html_escape(lang_name)),
         parse_mode=ParseMode.HTML,
         reply_markup=main_menu_keyboard(user_id),
     )
+
+
+# ---------------------------------------------------------------------------
+# ميزة قوائم M3U: إضافة ملف/رابط + تصفح القنوات واختيار قناة للبث
+# سياسة ثابتة: ترويسات ملف m3u الذي يرسله المستخدم (#EXTVLCOPT / #EXTHTTP)
+# تُستخدم كما هي عند البث. البوت مشغّل/ناشر فقط؛ المستخدم وحده مسؤول عن
+# محتوى ما يرسله وأي آليات وصول/تجاوز في ملفه (إن وُجدت).
+# ---------------------------------------------------------------------------
+_m3u_awaiting: set[int] = set()
+
+
+async def _fetch_m3u_text(url: str) -> str:
+    """جلب ملف m3u من رابط مباشر (http/https فقط، بحد حجم، بلا ترويسات مخصصة)."""
+    try:
+        import httpx  # مكتبة متوفرة مع python-telegram-bot v21
+    except ImportError as e:  # pragma: no cover
+        raise RuntimeError("httpx library is not available") from e
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=30,
+        headers={"User-Agent": DEFAULT_USER_AGENT},
+        max_redirects=3,
+    ) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.content
+        if len(data) > M3U_MAX_BYTES:
+            raise ValueError(f"file too large ({len(data)} bytes)")
+        return data.decode("utf-8", errors="ignore")
+
+
+@authorized_only
+async def cmd_add_m3u(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """أمر /add_m3u: يضع المستخدم في وضع انتظار ملف/رابط قائمة."""
+    user_id = update.effective_user.id
+    _m3u_awaiting.add(user_id)
+    await update.message.reply_text(
+        t(user_id, "m3u_prompt").format(max_ch=MAX_PLAYLIST_CHANNELS),
+        parse_mode=ParseMode.HTML,
+        reply_markup=cancel_keyboard(user_id),
+    )
+
+
+async def cmd_cancel_m3u(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """‏/cancel خارج محادثة setup: يلغي وضع انتظار m3u فقط إن كان مفعّلاً."""
+    uid = update.effective_user.id
+    if uid in _m3u_awaiting:
+        _m3u_awaiting.discard(uid)
+        await update.message.reply_text(t(uid, "setup_cancelled"))
+
+
+async def on_m3u_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """يستقبل ملف m3u كوثيقة أو رابطاً نصياً أثناء وضع الانتظار فقط.
+
+    بلا @authorized_only كي لا يزعج المستخدمين غير المصرح لهم برفض على كل رسالة؛
+    وضع الانتظار لا يدخل إلا عبر /add_m3u المحمي بالمصادقة أصلاً.
+    """
+    user = update.effective_user
+    if not user or user.id not in _m3u_awaiting or not update.message:
+        return  # ليس في وضع انتظار m3u — تجاهل صامت
+    user_id = user.id
+    text = None
+
+    if update.message.document:
+        doc = update.message.document
+        if doc.file_size and doc.file_size > M3U_MAX_BYTES:
+            _m3u_awaiting.discard(user_id)
+            await update.message.reply_text(t(user_id, "m3u_too_big"))
+            return
+        try:
+            tg_file = await doc.get_file()
+            data = bytes(await tg_file.download_as_bytearray())
+        except Exception as e:  # noqa: BLE001
+            await update.message.reply_text(
+                t(user_id, "m3u_fetch_fail").format(error=html_escape(str(e)[:150]))
+            )
+            return
+        if len(data) > M3U_MAX_BYTES:
+            _m3u_awaiting.discard(user_id)
+            await update.message.reply_text(t(user_id, "m3u_too_big"))
+            return
+        text = data.decode("utf-8", errors="ignore")
+    elif update.message.text:
+        url = update.message.text.strip()
+        if not is_valid_stream_url(url) or urlparse(url).scheme not in ("http", "https"):
+            await update.message.reply_text(t(user_id, "m3u_bad_url"))
+            return  # يبقى في وضع الانتظار لإعادة المحاولة
+        try:
+            text = await _fetch_m3u_text(url)
+        except Exception as e:  # noqa: BLE001
+            await update.message.reply_text(
+                t(user_id, "m3u_fetch_fail").format(error=html_escape(str(e)[:150]))
+            )
+            return
+    else:
+        return
+
+    _m3u_awaiting.discard(user_id)
+    channels, skipped = parse_m3u(text)
+    if not channels:
+        await update.message.reply_text(t(user_id, "m3u_parse_fail"))
+        return
+    count = save_playlist(user_id, channels)
+    skipped_txt = t(user_id, "m3u_skipped").format(skipped=skipped) if skipped else ""
+    sample = html_escape(", ".join(c[0] for c in channels[:5]))
+    await update.message.reply_text(
+        t(user_id, "m3u_added").format(count=count, skipped_txt=skipped_txt, sample=sample),
+        parse_mode=ParseMode.HTML,
+    )
+    await show_channels_list(update, context, page=0, edit=False)
+
+
+def _channels_keyboard(user_id: int, page: int) -> Optional[InlineKeyboardMarkup]:
+    """لوحة قنوات مع تقسيم صفحات + حذف. تعيد None إن لم توجد قائمة."""
+    rows = get_playlist(user_id)
+    if not rows:
+        return None
+    pages = max(1, (len(rows) + M3U_PAGE_SIZE - 1) // M3U_PAGE_SIZE)
+    page = max(0, min(page, pages - 1))
+    window = rows[page * M3U_PAGE_SIZE:(page + 1) * M3U_PAGE_SIZE]
+    kb = [[InlineKeyboardButton(f"{r['idx'] + 1}. {r['name'][:28]}", callback_data=f"ch:sel:{r['idx']}")]
+          for r in window]
+    if pages > 1:
+        kb.append([
+            InlineKeyboardButton("◀️", callback_data=f"ch:page:{max(0, page - 1)}"),
+            InlineKeyboardButton(f"{page + 1}/{pages}", callback_data="ch:noop"),
+            InlineKeyboardButton("▶️", callback_data=f"ch:page:{min(pages - 1, page + 1)}"),
+        ])
+    kb.append([
+        InlineKeyboardButton(t(user_id, "m3u_btn_clear"), callback_data="ch:del"),
+        InlineKeyboardButton(t(user_id, "btn_home"), callback_data="cmd:home"),
+    ])
+    return InlineKeyboardMarkup(kb)
+
+
+@authorized_only
+async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await show_channels_list(update, context, page=0, edit=False)
+
+
+async def show_channels_list(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                             page: int = 0, edit: bool = False) -> None:
+    """عرض/تحديث قائمة القنوات. يعمل من أمر أو من زر."""
+    user_id = update.effective_user.id
+    kb = _channels_keyboard(user_id, page)
+    if kb is None:
+        text = t(user_id, "m3u_empty")
+        markup = main_menu_keyboard(user_id)
+    else:
+        count = len(get_playlist(user_id))
+        text = t(user_id, "m3u_list_title").format(count=count)
+        markup = kb
+    if edit and update.callback_query:
+        await safe_edit(update.callback_query, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    else:
+        target = _reply_target(update)
+        if target:
+            await target.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+@authorized_only
+async def on_playlist_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالج أزرار القنوات: ch:sel / ch:page / ch:del / ch:noop."""
+    query = update.callback_query
+    await _answer_callback(update)
+    user_id = query.from_user.id
+    data = query.data or ""
+
+    if data == "ch:noop":
+        return
+    if data == "ch:del":
+        clear_playlist(user_id)
+        await safe_edit(query, t(user_id, "m3u_cleared"),
+                        parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard(user_id))
+        return
+    if data.startswith("ch:page:"):
+        try:
+            page = int(data.split(":")[2])
+        except (IndexError, ValueError):
+            page = 0
+        await show_channels_list(update, context, page=page, edit=True)
+        return
+    if data.startswith("ch:sel:"):
+        try:
+            idx = int(data.split(":")[2])
+        except (IndexError, ValueError):
+            return
+        ch = get_playlist_channel(user_id, idx)
+        if not ch:
+            await safe_edit(query, t(user_id, "m3u_empty"),
+                            parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard(user_id))
+            return
+        if await is_stream_running(user_id):
+            await safe_edit(query, t(user_id, "m3u_stop_first"),
+                            parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard(user_id))
+            return
+        if not get_settings(user_id):
+            await safe_edit(query, t(user_id, "m3u_need_setup"),
+                            parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard(user_id))
+            return
+        update_stream_url(user_id, ch["url"], headers=load_headers(ch["headers"]))
+        sel_headers = load_headers(ch["headers"])
+        logger.info(
+            f"📋 user {user_id} selected playlist channel {idx}: {ch['name']} "
+            f"(headers={list(sel_headers.keys()) or 'none'})"
+        )
+        hdr_txt = ""
+        if sel_headers:
+            hdr_txt = t(user_id, "m3u_hdrs").format(hdrs=html_escape(", ".join(sel_headers.keys())))
+        await safe_edit(query, t(user_id, "m3u_selected").format(
+            name=html_escape(ch["name"]), hdr_txt=hdr_txt),
+            parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard(user_id))
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -1195,6 +1662,7 @@ async def start_setup_conversation(update: Update, context: ContextTypes.DEFAULT
             "server_url": existing["server_url"],
             "stream_key": existing["stream_key"],
             "channel_id": existing["channel_id"],
+            "headers": load_headers(existing["headers"]),
             "stream_type": detect_stream_type(existing["m3u_url"]),
             "modify_mode": False,
         }
@@ -1203,7 +1671,7 @@ async def start_setup_conversation(update: Update, context: ContextTypes.DEFAULT
             f"{t(user_id, 'setup_menu_title')}"
         )
         if update.callback_query:
-            await safe_edit(update.callback_query, 
+            await safe_edit(update.callback_query,
                 msg, parse_mode=ParseMode.HTML, reply_markup=setup_menu_keyboard(user_id),
             )
         else:
@@ -1215,7 +1683,7 @@ async def start_setup_conversation(update: Update, context: ContextTypes.DEFAULT
         # لا توجد إعدادات → ابدأ المعالج الكامل
         _setup_drafts[user_id] = {"modify_mode": False}
         if update.callback_query:
-            await safe_edit(update.callback_query, 
+            await safe_edit(update.callback_query,
                 t(user_id, "setup_intro"),
                 parse_mode=ParseMode.HTML,
                 reply_markup=cancel_keyboard(user_id),
@@ -1240,7 +1708,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     if data == "setup:reuse":
         # استخدم الإعدادات المحفوظة كما هي → انتقل للمراجعة
-        await safe_edit(query, 
+        await safe_edit(query,
             _build_review_message(user_id, draft),
             parse_mode=ParseMode.HTML,
             reply_markup=confirm_cancel_keyboard(user_id),
@@ -1250,7 +1718,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "setup:new":
         # ابدأ من الصفر
         _setup_drafts[user_id] = {"modify_mode": False}
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_stream_url_prompt"),
             parse_mode=ParseMode.HTML,
             reply_markup=cancel_keyboard(user_id),
@@ -1260,7 +1728,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "setup:modify_url":
         draft["modify_mode"] = True
         draft["modify_field"] = "m3u_url"
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_modify_url_prompt"),
             parse_mode=ParseMode.HTML,
             reply_markup=cancel_keyboard(user_id),
@@ -1270,7 +1738,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "setup:modify_server":
         draft["modify_mode"] = True
         draft["modify_field"] = "server_url"
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_modify_server_prompt"),
             parse_mode=ParseMode.HTML,
             reply_markup=cancel_keyboard(user_id),
@@ -1280,7 +1748,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "setup:modify_key":
         draft["modify_mode"] = True
         draft["modify_field"] = "stream_key"
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_modify_key_prompt"),
             parse_mode=ParseMode.HTML,
             reply_markup=cancel_keyboard(user_id),
@@ -1290,7 +1758,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "setup:modify_channel":
         draft["modify_mode"] = True
         draft["modify_field"] = "channel_id"
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_modify_channel_prompt"),
             parse_mode=ParseMode.HTML,
             reply_markup=cancel_keyboard(user_id),
@@ -1299,7 +1767,7 @@ async def on_setup_menu_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     elif data == "cmd:cancel":
         _setup_drafts.pop(user_id, None)
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_cancelled"),
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(user_id),
@@ -1333,7 +1801,7 @@ async def test_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return await _session_expired(update, user_id)
     await safe_edit(query, t(user_id, "test_running"), parse_mode=ParseMode.HTML)
     stream_type = draft.get("stream_type") or detect_stream_type(draft["m3u_url"])
-    ok, info = await _probe_source(draft["m3u_url"], stream_type)
+    ok, info = await _probe_source(draft["m3u_url"], stream_type, headers=draft.get("headers"))
     head = (
         t(user_id, "test_ok").format(summary=html_escape(info)) if ok
         else t(user_id, "test_failed").format(error=html_escape(info))
@@ -1408,6 +1876,8 @@ async def on_stream_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return STATE_STREAM_URL
     _setup_drafts.setdefault(user_id, {})["m3u_url"] = text
     _setup_drafts[user_id]["stream_type"] = detect_stream_type(text)
+    # رابط يدخله المستخدم نصاً ليس من ملف m3u؛ تصفير أي ترويسات قديمة
+    _setup_drafts[user_id]["headers"] = {}
 
     next_state = await _after_field_entered(update, user_id, STATE_SERVER_URL)
     if next_state == STATE_SERVER_URL:
@@ -1506,7 +1976,7 @@ async def confirm_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     draft = _setup_drafts.get(user_id, {})
     if not draft or "m3u_url" not in draft:
-        await safe_edit(query, 
+        await safe_edit(query,
             t(user_id, "setup_cancelled"),
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(user_id),
@@ -1522,7 +1992,7 @@ async def confirm_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # هل البث كان يعمل قبل الحفظ؟ (لإعادة التشغيل تلقائياً)
     was_running = await is_stream_running(user_id)
 
-    await safe_edit(query, 
+    await safe_edit(query,
         f"{t(user_id, 'setup_checking_perms')}\n"
         f"{t(user_id, 'setup_detected_type').format(type_label=html_escape(type_label(user_id, stream_type)))}",
         parse_mode=ParseMode.HTML,
@@ -1537,7 +2007,8 @@ async def confirm_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
 
     try:
-        save_settings(user_id, m3u_url, server_url, stream_key, channel_id)
+        save_settings(user_id, m3u_url, server_url, stream_key, channel_id,
+                      headers=draft.get("headers") or {})
 
         # إذا كان البث يعمل، أعد تشغيله بالإعدادات الجديدة
         if was_running:
@@ -1547,7 +2018,8 @@ async def confirm_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 parse_mode=ParseMode.HTML,
             )
             try:
-                await launch_stream(user_id, m3u_url, server_url, stream_key, force=True)
+                await launch_stream(user_id, m3u_url, server_url, stream_key, force=True,
+                                    headers=draft.get("headers") or {})
                 final_msg = t(user_id, "setup_saved_restart")
             except Exception as e:
                 final_msg = _launch_error_text(user_id, e)
@@ -1578,7 +2050,7 @@ async def cancel_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await _answer_callback(update)
         user_id = update.callback_query.from_user.id
         _setup_drafts.pop(user_id, None)
-        await safe_edit(update.callback_query, 
+        await safe_edit(update.callback_query,
             t(user_id, "setup_cancelled"),
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(user_id),
@@ -1605,7 +2077,8 @@ async def do_start_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, ed
     await _send_or_edit(update, t(user_id, "stream_starting"), None, edit)
 
     try:
-        ok = await launch_stream(user_id, settings["m3u_url"], settings["server_url"], settings["stream_key"])
+        ok = await launch_stream(user_id, settings["m3u_url"], settings["server_url"], settings["stream_key"],
+                                 headers=load_headers(settings["headers"]))
         final_msg = t(user_id, "stream_started") if ok else t(user_id, "stream_already_running")
     except Exception as e:
         final_msg = _launch_error_text(user_id, e)
@@ -1632,7 +2105,8 @@ async def do_restart_stream(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     try:
         ok = await launch_stream(
-            user_id, settings["m3u_url"], settings["server_url"], settings["stream_key"], force=True
+            user_id, settings["m3u_url"], settings["server_url"], settings["stream_key"], force=True,
+            headers=load_headers(settings["headers"]),
         )
         final_msg = t(user_id, "stream_restarted") if ok else t(user_id, "stream_failed").format(error="unknown")
     except Exception as e:
@@ -1758,7 +2232,8 @@ async def resume_active_streams(application: Application) -> None:
         for row in active:
             user_id = row["user_id"]
             try:
-                await launch_stream(user_id, row["m3u_url"], row["server_url"], row["stream_key"])
+                await launch_stream(user_id, row["m3u_url"], row["server_url"], row["stream_key"],
+                                    headers=load_headers(row["headers"]))
                 logger.info(f"🔄 Resumed stream for user {user_id}")
                 await asyncio.sleep(1)
             except Exception as e:
@@ -1817,7 +2292,7 @@ def main() -> None:
             "Set ADMIN_IDS=123456,789012 in .env"
         )
 
-    logger.info("🤖 Starting Streaming Bot (hardened v2.4.0)...")
+    logger.info("🤖 Starting Streaming Bot (hardened v2.5.0)...")
 
     application = Application.builder().token(bot_token).build()
     application.add_error_handler(error_handler)
@@ -1865,8 +2340,18 @@ def main() -> None:
     application.add_handler(CommandHandler("restart_stream", do_restart_stream))
     application.add_handler(CommandHandler("status", do_status))
 
-    # لاحظ: callbacks تبدأ بـ cmd: أو lang: فقط (setup: يُعالَج داخل ConversationHandler)
+    # ---- ميزة قوائم M3U ----
+    application.add_handler(CommandHandler("add_m3u", cmd_add_m3u))
+    application.add_handler(CommandHandler("channels", cmd_channels))
+    application.add_handler(CommandHandler("cancel", cmd_cancel_m3u))
+    # يستقبل الوثائق/النصوص فقط أثناء وضع انتظار m3u؛ تجاهل صامت غير ذلك
+    application.add_handler(
+        MessageHandler((filters.Document.ALL | (filters.TEXT & ~filters.COMMAND)), on_m3u_input)
+    )
+
+    # لاحظ: callbacks تبدأ بـ cmd: أو lang: أو ch: فقط (setup: يُعالَج داخل ConversationHandler)
     application.add_handler(CallbackQueryHandler(on_language_callback, pattern="^lang:"))
+    application.add_handler(CallbackQueryHandler(on_playlist_callback, pattern="^ch:"))
     application.add_handler(CallbackQueryHandler(on_menu_callback, pattern="^cmd:"))
     # أي زر لم يطابقه شيء (setup:* بعد إعادة التشغيل مثلاً) لا يبقى معلقاً
     application.add_handler(CallbackQueryHandler(on_stale_callback))
