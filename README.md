@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Streaming Bot Banner](https://img.shields.io/badge/Version-2.5.1%20Hardened-blue?style=for-the-badge)
+![Streaming Bot Banner](https://img.shields.io/badge/Version-2.5.2%20Hardened-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge)
@@ -37,6 +37,10 @@ Designed for broadcasters who need a **secure, multi-tenant, maintainable** stre
 > ⚠️ **Playlist headers policy (v2.5.0):** when you stream a channel from your own M3U playlist, the bot passes the headers **you** wrote inside that file (`#EXTVLCOPT:http-user-agent` / `http-referrer` and `#EXTHTTP:{...}`) to FFmpeg and ffprobe exactly as written. The bot is a player and publisher only: it adds no headers of its own (only the neutral default `User-Agent` when yours is absent) and invents no bypass mechanism. **You alone are responsible for the content you send and for anything your playlist file contains.**
 
 ### 🔥 What's New in the Hardened Edition
+
+#### 🆕 v2.5.2 — User-Agent via `-user_agent` instead of `-headers`
+
+- 🩹 **Strict servers that reject FFmpeg's default User-Agent now work:** some servers (e.g. livekooravip) return 403 when they see FFmpeg's default `Lavf` User-Agent. Passing a browser `User-Agent` inside `-headers` alone does **not** replace it, so the request still failed. The bot now extracts the `User-Agent` from the channel's headers (or the neutral default when absent) and passes it via `-user_agent`, excluding it from the `-headers` block — in the FFmpeg stream command and in the 🧪 probe. No change to the v2.5.0 playlist-headers behaviour or policy.
 
 #### 🆕 v2.5.1 — Fix for HLS playlists with extensionless segments
 
@@ -537,6 +541,10 @@ This project is licensed under the **MIT License** — see [LICENSE](./LICENSE) 
 > ⚠️ **سياسة ترويسات قوائم التشغيل (v2.5.0):** عند بث قناة من قائمة M3U الخاصة بك، يمرّر البوت الترويسات **التي كتبتها أنت** داخل ذلك الملف (`#EXTVLCOPT:http-user-agent` / `http-referrer` و`#EXTHTTP:{...}`) إلى FFmpeg وffprobe كما هي تماماً. البوت مشغّل وناشر فقط: لا يضيف أي ترويسات من عنده (عدا `User-Agent` الافتراضية المحايدة عند غياب ترويساتك) ولا يخترع أي آلية تجاوز. **أنت وحدك المسؤول عن المحتوى الذي ترسله وعن أي شيء تحتويه قائمة التشغيل الخاصة بك.**
 
 ### 🔥 ما الجديد في النسخة المُحصَّنة
+
+#### 🆕 v2.5.2 — تمرير User-Agent عبر `-user_agent` بدل `-headers`
+
+- 🩹 **الخوادم الصارمة التي ترفض User-Agent الافتراضي تاع FFmpeg تعمل الآن:** بعض الخوادم (مثل livekooravip) ترجع 403 إن رأت `User-Agent` الافتراضي تاع FFmpeg (Lavf). تمرير `User-Agent` متصفح داخل `-headers` وحده **لا يستبدله**، فيفشل الطلب. البوت يستخرج الآن `User-Agent` من ترويسات القناة (أو الافتراضي عند غيابه) ويمرّره عبر `-user_agent`، ويستثنيه من سلسلة `-headers` — في أمر FFmpeg وفي فحص 🧪. لا تغيير في سلوك ترويسات قوائم M3U أو سياستها من v2.5.0.
 
 #### 🆕 v2.5.1 — إصلاح بث قوائم HLS ذات المقاطع بلا امتداد
 
@@ -1056,6 +1064,6 @@ git push origin feature/AmazingFeature
 
 Made with ❤️ and 🔐 by the Hardened Edition contributors
 
-**Last Updated**: November 2026 · **Version**: 2.5.1 Hardened
+**Last Updated**: November 2026 · **Version**: 2.5.2 Hardened
 
 </div>

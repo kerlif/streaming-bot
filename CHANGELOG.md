@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2] - 2026-11-28
+
+### Fixed
+- 🩹 Strict servers (e.g. livekooravip) that reject FFmpeg's default `Lavf` User-Agent returned 403: passing a browser `User-Agent` inside `-headers` alone does not replace FFmpeg's default, so the request still failed. The bot now extracts the `User-Agent` from the channel's headers (or the neutral default when absent) and passes it via `-user_agent`, excluding it from the `-headers` block — in the FFmpeg stream command (`_http_input_opts`) and in the 🧪 ffprobe check (`_probe_source`). No change to the v2.5.0 playlist-headers behaviour.
+
 ## [2.5.1] - 2026-11-26
 
 ### Fixed

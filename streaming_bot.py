@@ -1,6 +1,14 @@
 """
-Streaming Bot - Hardened Edition v2.5.1
+Streaming Bot - Hardened Edition v2.5.2
 =======================================
+ميزات v2.5.2:
+- [الأهم] تمرير User-Agent عبر ‎-user_agent‎ بدل ‎-headers‎ في أوامر FFmpeg
+  و ffprobe: بعض الخوادم (مثل livekooravip) ترفض الطلب إن رأت User-Agent
+  الافتراضي تاع FFmpeg (Lavf) — تمريره في ‎-headers‎ وحده لا يستبدله،
+  فيرجع الخادم 403. الآن يُستخرج User-Agent من ترويسات القناة (أو الافتراضي
+  عند غيابه) ويُمرَّر عبر ‎-user_agent‎، ويُستثنى من سلسلة ‎-headers‎.
+- لا تغيير في الترويسات أو في سياسة قوائم M3U من v2.5.0.
+
 ميزات v2.5.1:
 - [الأهم] إصلاح بث قوائم HLS التي تعيد مقاطع بلا امتداد (مثل روابط
   ‎/seg?d=...‎): مفسّر HLS في FFmpeg يرفضها افتراضياً (test_segment في
@@ -825,15 +833,29 @@ async def _extract_youtube_live_url(yt_url: str) -> Optional[str]:
 _QUIET = ["-nostdin", "-nostats", "-loglevel", "warning"]
 
 
-def _headers_block(headers: Optional[dict], url: str) -> str:
+def _headers_block(headers: Optional[dict], url: str, *,
+                   skip_user_agent: bool = False) -> str:
     """يبني سلسلة ترويسات FFmpeg من إعدادات ملف m3u للمستخدم.
-    ترويسات المستخدم تُمرّر كما هي؛ User-Agent الافتراضي يُستخدم فقط عند غيابه."""
+    ترويسات المستخدم تُمرّر كما هي؛ User-Agent الافتراضي يُستخدم فقط عند غيابه.
+    عند skip_user_agent يُستثنى User-Agent من السلسلة لأنه يُمرَّر عبر -user_agent
+    (خوادم مثل livekooravip ترفض طلب FFmpeg إن رأت User-Agent الافتراضي Lavf)."""
     merged: dict[str, str] = {}
-    if not any(k.lower() == "user-agent" for k in (headers or {})):
+    if not skip_user_agent and not any(k.lower() == "user-agent" for k in (headers or {})):
         merged["User-Agent"] = DEFAULT_USER_AGENT
     if headers:
-        merged.update(headers)
+        for k, v in headers.items():
+            if skip_user_agent and k.lower() == "user-agent":
+                continue
+            merged[k] = v
     return "".join(f"{k}: {v}\r\n" for k, v in merged.items())
+
+
+def _http_user_agent(headers: Optional[dict]) -> str:
+    """User-Agent الذي يُمرَّر عبر -user_agent (من ملف m3u أو الافتراضي)."""
+    for k, v in (headers or {}).items():
+        if k.lower() == "user-agent":
+            return v
+    return DEFAULT_USER_AGENT
 
 
 def _http_input_opts(url: str, reconnect_at_eof: str = "1", delay: str = "5",
@@ -843,7 +865,8 @@ def _http_input_opts(url: str, reconnect_at_eof: str = "1", delay: str = "5",
     scheme = urlparse(url).scheme
     if scheme in ("http", "https"):
         return [
-            "-headers", _headers_block(headers, url),
+            "-user_agent", _http_user_agent(headers),
+            "-headers", _headers_block(headers, url, skip_user_agent=True),
             "-timeout", str(FFMPEG_TIMEOUT),
             "-reconnect", "1", "-reconnect_at_eof", reconnect_at_eof,
             "-reconnect_streamed", "1", "-reconnect_delay_max", delay,
@@ -1150,7 +1173,9 @@ async def _probe_source(url: str, stream_type: str,
             return False, "yt-dlp could not extract a live URL"
     cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams"]
     if urlparse(target).scheme in ("http", "https"):
-        cmd += ["-headers", _headers_block(headers, target), "-rw_timeout", "15000000"]
+        cmd += ["-user_agent", _http_user_agent(headers),
+                "-headers", _headers_block(headers, target, skip_user_agent=True),
+                "-rw_timeout", "15000000"]
         if urlparse(target).path.lower().endswith(".m3u8"):
             # v2.5.1: نفس إصلاح البث — مقاطع HLS بلا امتداد تُرفض افتراضياً.
             cmd += ["-extension_picky", "0",
@@ -2314,7 +2339,7 @@ def main() -> None:
             "Set ADMIN_IDS=123456,789012 in .env"
         )
 
-    logger.info("🤖 Starting Streaming Bot (hardened v2.5.1)...")
+    logger.info("🤖 Starting Streaming Bot (hardened v2.5.2)...")
 
     application = Application.builder().token(bot_token).build()
     application.add_error_handler(error_handler)
